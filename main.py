@@ -1,9 +1,11 @@
 import logging
-from splunkInstrumentor import instrument  # Import the setup
+from splunkInstrumentor import SplunkInstrumentor  # Import the setup
 import worker  # Import other modules
 
-# One-time setup at startup (add this line)
-instrument()
+
+# One-time instrumentation at startup (add this)
+instrumentor = SplunkInstrumentor()
+instrumentor.instrument()
 
 # Your app code (no further changes needed)
 logger = logging.getLogger(__name__)
