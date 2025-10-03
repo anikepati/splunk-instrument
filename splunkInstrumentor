@@ -1,0 +1,93 @@
+import logging
+import os
+from splunk_handler import SplunkHandler
+from pythonjsonlogger import jsonlogger
+
+# New imports for OTel
+from opentelemetry import trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from splunk_otel import start_tracing  # From splunk-opentelemetry (auto-configures)
+
+def setup_splunk_logging():
+    """
+    Configures Python logging to send to Splunk HEC in real-time.
+    Loads config from env vars for security.
+    """
+    # Existing Splunk HEC setup (keep for logs if desired)
+    SPLUNK_HOST = os.getenv('SPLUNK_HOST', 'your-splunk-host.example.com')
+    SPLUNK_PORT = int(os.getenv('SPLUNK_PORT', 8088))
+    SPLUNK_TOKEN = os.getenv('SPLUNK_TOKEN', 'your-hec-token-here')
+    SPLUNK_INDEX = os.getenv('SPLUNK_INDEX', 'cyber_ops')
+
+    splunk_handler = SplunkHandler(
+        host=SPLUNK_HOST,
+        port=SPLUNK_PORT,
+        token=SPLUNK_TOKEN,
+        index=SPLUNK_INDEX,
+        sourcetype='_json',
+        source='cyber_app',
+        protocol='https',
+        verify=True,
+        flush_interval=2.0,
+        queue_size=1000
+    )
+
+    formatter = jsonlogger.JsonFormatter(
+        '%(asctime)s %(name)s %(levelname)s %(message)s %(filename)s %(lineno)s %(process)d %(thread)d'
+    )
+    splunk_handler.setFormatter(formatter)
+
+    # New: OTel setup for full telemetry (traces, metrics, logs)
+    resource = Resource.create({
+        "service.name": os.getenv('OTEL_SERVICE_NAME', 'cyber_app'),
+        "service.instance.id": "cyber_app_instance",
+    })
+
+    # Tracing provider (for traces and metrics)
+    trace.set_tracer_provider(TracerProvider(resource=resource))
+    span_exporter = OTLPSpanExporter()  # Exports to Splunk via OTLP
+    trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(span_exporter))
+
+    # Logging provider (integrates with Python logging for log export and trace correlation)
+    logger_provider = LoggerProvider(resource=resource)
+    set_logger_provider(logger_provider)
+    log_exporter = OTLPLogExporter()  # Exports logs to Splunk
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+
+    # Attach OTel handler to root logger (correlates logs with traces)
+    otel_handler = LoggingHandler(level=logging.DEBUG, logger_provider=logger_provider)
+
+    # Configure root logger with both handlers
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(splunk_handler)  # Existing HEC logs
+    root_logger.addHandler(otel_handler)    # OTel for telemetry
+
+    # Optional console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # Redirect print() as before
+    import sys
+    class StdoutLogger:
+        def write(self, message):
+            message = message.strip()
+            if message:
+                logging.getLogger('stdout').info(message)
+        def flush(self):
+            pass
+    sys.stdout = StdoutLogger()
+    sys.stderr = StdoutLogger()
+
+    # Activate Splunk OTel auto-instrumentation
+    start_tracing()  # This enables auto-tracing for supported libs
+
+    logging.info("Splunk logging and OpenTelemetry configured for real-time cybersecurity telemetry.")
