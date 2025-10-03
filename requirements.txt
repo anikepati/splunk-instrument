@@ -1,0 +1,4 @@
+splunk-handler==2.1.0  # For Splunk HTTP Event Collector integration with logging
+python-json-logger==2.0.7  # For formatting logs as JSON
+requests==2.32.3  # HTTP library used by splunk-handler
+splunk-opentelemetry[all]==2.7.0  # Splunk's OpenTelemetry distribution for traces, metrics, and log correlation
